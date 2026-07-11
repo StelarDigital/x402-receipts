@@ -42,6 +42,29 @@ export interface AnchorInfo {
   leaf_index: number;
 }
 
+export type GoodsKind = "api-response" | "file" | "dataset" | "text" | "other";
+
+/**
+ * Seller-declared description of what was actually delivered, bound to the delivered
+ * bytes via body_sha256/bytes (see verifyGoodsAgainstBody in verify.ts). The binding
+ * proves "these are the exact bytes the seller is describing" — it does NOT prove the
+ * description/summary are truthful; they remain seller claims, same trust level as any
+ * other unsigned metadata. `goods` is intentionally excluded from receiptCore/signing:
+ * the seller signature already commits to response.body_sha256, and goods.body_sha256
+ * must equal it, so the delivered bytes are authenticated either way. Description/
+ * summary/preview riding alongside are NOT separately signed and can be swapped by
+ * anyone relaying the receipt as long as body_sha256 still matches — see README
+ * "Goods on the receipt" for what this does and doesn't prove.
+ */
+export interface GoodsInfo {
+  description: string;
+  kind: GoodsKind;
+  summary: Record<string, string | number | boolean> | null;
+  body_sha256: string;
+  bytes: number;
+  preview: string | null;
+}
+
 export interface Receipt {
   scheme: "x402-receipts/v0";
   payment: PaymentInfo;
@@ -50,6 +73,8 @@ export interface Receipt {
   seller: SellerInfo;
   buyer: BuyerInfo;
   anchor: AnchorInfo | null;
+  /** Optional goods attestation. Omitted entirely (not even `null`) unless explicitly provided. */
+  goods?: GoodsInfo | null;
 }
 
 export interface BuildReceiptInput {
@@ -57,11 +82,17 @@ export interface BuildReceiptInput {
   request: RequestInfo;
   response: ResponseInfo;
   seller_agent_id: string;
+  goods?: GoodsInfo | null;
 }
 
-/** Builds an unsigned receipt (seller.sig, buyer.countersig, anchor all null). */
+/**
+ * Builds an unsigned receipt (seller.sig, buyer.countersig, anchor all null). The
+ * `goods` key is only ever set on the returned object when `input.goods` is not
+ * `undefined` — this keeps the canonicalized/digested shape of a goods-less receipt
+ * byte-identical to receipts built before goods attestation existed.
+ */
 export function buildReceipt(input: BuildReceiptInput): Receipt {
-  return {
+  const receipt: Receipt = {
     scheme: "x402-receipts/v0",
     payment: { ...input.payment },
     request: { ...input.request },
@@ -70,6 +101,13 @@ export function buildReceipt(input: BuildReceiptInput): Receipt {
     buyer: { countersig: null },
     anchor: null,
   };
+  if (input.goods !== undefined) {
+    receipt.goods =
+      input.goods === null
+        ? null
+        : { ...input.goods, summary: input.goods.summary ? { ...input.goods.summary } : null };
+  }
+  return receipt;
 }
 
 /**
