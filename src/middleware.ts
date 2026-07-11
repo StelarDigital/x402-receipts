@@ -1,4 +1,4 @@
-import type { GoodsInfo, GoodsKind, Hex, PaymentInfo, Receipt, RequestInfo, ResponseInfo } from "./receipt.js";
+import type { DeliveryInfo, GoodsInfo, GoodsKind, Hex, PaymentInfo, Receipt, RequestInfo, ResponseInfo } from "./receipt.js";
 import { buildReceipt, sha256Hex } from "./receipt.js";
 import { signReceipt } from "./sign.js";
 import { appendReceipt } from "./ledger.js";
@@ -101,11 +101,16 @@ export function createReceiptMiddleware<T>(options: ReceiptMiddlewareOptions<T>)
           };
         }
 
+        const delivery: DeliveryInfo = {
+          status: result.response.status >= 200 && result.response.status < 300 ? "delivered" : "failed",
+        };
+
         let receipt: Receipt = buildReceipt({
           payment: result.payment,
           request: result.request,
           response: result.response,
           seller_agent_id: options.sellerAgentId,
+          delivery,
           ...(goods !== undefined ? { goods } : {}),
         });
 

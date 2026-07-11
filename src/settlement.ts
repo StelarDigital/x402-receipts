@@ -26,9 +26,12 @@ const NATIVE_ASSET_SYMBOLS = new Set(["ETH", "NATIVE"]);
  * This map is intentionally small and explicit — an unrecognized symbol fails closed
  * (verifySettlement reports an error and settled:false) rather than guessing.
  */
+/** Base mainnet USDC contract address, exported for callers populating `payment.asset_address` (v0.3). */
+export const BASE_USDC = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" as Address;
+
 const KNOWN_ERC20_CONTRACTS: Record<string, Record<number, Address>> = {
   USDC: {
-    8453: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" as Address, // Base mainnet
+    8453: BASE_USDC, // Base mainnet
     84532: "0x036CbD53842c5426634e7929541eC2318f3dCF7e" as Address, // Base Sepolia
   },
 };
@@ -255,6 +258,21 @@ export async function verifySettlement(
     errors.push(
       `insufficient confirmations: ${confirmations} < required ${minConfirmations}`
     );
+  }
+
+  /**
+   * v0.3 asset binding: when payment.asset_address is present, it must resolve to a
+   * recognized contract for the claimed chain via the same allowlist as a raw `asset`
+   * address (resolveAssetContract) — an unrecognized asset_address fails closed, same
+   * rationale as the unrecognized-symbol/unrecognized-address cases above.
+   */
+  if (receipt.payment.asset_address) {
+    const recognized = resolveAssetContract(receipt.payment.asset_address, receipt.payment.chain_id);
+    if (!recognized) {
+      errors.push(
+        `unrecognized asset_address "${receipt.payment.asset_address}" on chain ${receipt.payment.chain_id}: not a recognized contract`
+      );
+    }
   }
 
   if (NATIVE_ASSET_SYMBOLS.has(receipt.payment.asset.toUpperCase())) {

@@ -169,13 +169,14 @@ one for the other.
 ```json
 {
   "scheme": "x402-receipts/v0",
-  "payment":  { "chain_id": number, "tx_hash": hex, "asset": string, "amount": string, "payer": address, "payee": address },
-  "request":  { "method": string, "url_hash": sha256hex, "params_hash": sha256hex, "ts": iso8601 },
+  "payment":  { "chain_id": number, "tx_hash": hex, "asset": string, "amount": string, "payer": address, "payee": address, "asset_address": string | undefined },
+  "request":  { "method": string, "url_hash": sha256hex, "params_hash": sha256hex, "ts": iso8601, "payment_requirements_sha256": sha256hex | undefined },
   "response": { "status": number, "body_sha256": sha256hex, "content_type": string, "ts": iso8601, "latency_ms": number },
   "seller":   { "erc8004_agent_id": string, "sig": eip712sig },
   "buyer":    { "countersig": eip712sig | null },
   "anchor":   { "batch_merkle_root": hex, "base_tx": hex, "leaf_index": number } | null,
-  "goods":    { "description": string, "kind": "api-response"|"file"|"dataset"|"text"|"other", "summary": object | null, "body_sha256": sha256hex, "bytes": number, "preview": string | null } | null | undefined
+  "goods":    { "description": string, "kind": "api-response"|"file"|"dataset"|"text"|"other", "summary": object | null, "body_sha256": sha256hex, "bytes": number, "preview": string | null } | null | undefined,
+  "delivery": { "status": "delivered" | "failed" | "partial" } | null | undefined
 }
 ```
 
@@ -267,6 +268,43 @@ const value = await receipts.wrap(async () => {
   };
 });
 ```
+
+## v0.3 additions
+
+Implemented in response to reviewer feedback on
+[x402-foundation/x402#2833](https://github.com/x402-foundation/x402/issues/2833). All
+four are additive: old receipts (no new fields, legacy `signReceiptLegacyV0`/
+`countersignReceiptLegacyV0` signatures) still verify unchanged. The `scheme` string
+stays `"x402-receipts/v0"` — the version lives in the signature domain and the package
+version, not the scheme string.
+
+- **`payment_requirements_sha256`** (`request.payment_requirements_sha256`, optional) —
+  sha256 of the canonicalized payment requirements `{payTo, amount, asset, scheme,
+  resource, timeout}` the buyer agreed to (`hashPaymentRequirements`). *Why:* lets a
+  verifier confirm the receipt is bound to the exact terms the buyer was quoted, not a
+  requirements object substituted after the fact. `verifyReceipt({ paymentRequirements
+  })` recomputes and compares; mismatch fails.
+- **`delivery`** (`{ status: "delivered" | "failed" | "partial" }`, optional) — *why:* a
+  signed receipt alone doesn't say whether the seller considers the delivery itself
+  successful (as opposed to just "a response existed"). `deliveryStatusOk(receipt)`
+  gives an explicit boolean (never throws); `verifyReceipt` additionally fails outright
+  when `goods` is attached but `delivery.status !== "delivered"`. `createReceiptMiddleware`
+  sets this automatically from the response status (2xx → `"delivered"`, otherwise
+  `"failed"`).
+- **Asset binding via `asset_address`** (`payment.asset_address`, optional) — `payment.asset`
+  may now be a legacy symbol *or* a CAIP-19 id / contract address; `asset_address` lets a
+  seller bind the exact token contract without a verifier needing to resolve a symbol.
+  *Why:* removes symbol-resolution ambiguity across chains/deployments. Exported
+  `BASE_USDC` constant for the common case. `verifyReceiptFull`'s settlement check fails
+  closed if `asset_address` isn't a recognized contract for the claimed chain.
+- **Versioned EIP-712 domain** (`{ name: "x402-receipts", version: "0.3", chainId }`) —
+  *why:* reviewers asked for a canonical, versioned signing domain/digest rather than an
+  implicit "v0" convention. New signatures (`signReceipt`/`countersignReceipt`) sign
+  under this domain with a typed struct that commits to payment (incl. `asset_address`) +
+  `payment_requirements_sha256` + request + response. `verifySellerSig`/
+  `verifyBuyerCountersig` try the v0.3 domain first, then fall back to the legacy v0
+  domain, so receipts signed before this release keep verifying with no changes on
+  either side.
 
 ## Usage
 

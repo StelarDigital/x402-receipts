@@ -1,6 +1,6 @@
 {
   "name": "x402-receipts",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Signed proof-of-delivery receipts for x402 machine-commerce sellers",
   "license": "Apache-2.0",
   "type": "module",
