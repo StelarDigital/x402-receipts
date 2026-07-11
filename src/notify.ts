@@ -43,16 +43,35 @@ const TIER_TITLES: Record<MomentTier, string> = {
   diamond: "💎🚀 HUGE AGENT SALE",
 };
 
-/** USDC base units (6 decimals) as a whole-dollar float, used only for tier/line rendering. */
-function usdcAmountToUsd(amountBaseUnits: string): number {
-  return Number(amountBaseUnits) / 1_000_000;
+/**
+ * Tier bucketing done entirely in BigInt on the raw base-units string — never round-trips
+ * through `Number`, so amounts beyond Number.MAX_SAFE_INTEGER (2^53) still bucket exactly,
+ * and no floating-point rounding can push a value across a tier boundary.
+ */
+function tierForAmount(amountBaseUnits: string): MomentTier {
+  const n = BigInt(amountBaseUnits);
+  if (n >= 100_000_000n) return "diamond";
+  if (n >= 10_000_000n) return "gold";
+  if (n >= 1_000_000n) return "fire";
+  return "spark";
 }
 
-function tierFor(usd: number): MomentTier {
-  if (usd >= 100) return "diamond";
-  if (usd >= 10) return "gold";
-  if (usd >= 1) return "fire";
-  return "spark";
+/**
+ * Exact USDC display from raw base-units string (6 decimals), BigInt-parsed so precision
+ * survives past 2^53 and never rounds — "999999" renders "0.999999", not "1" (which would
+ * contradict a "spark" tier), "1" renders "0.000001", not "0" (see landmine this fixes:
+ * Number(amountBaseUnits)/1e6 then toFixed() rounds the display across the tier boundary
+ * it was just bucketed against).
+ */
+function formatUsdExact(amountBaseUnits: string): string {
+  const n = BigInt(amountBaseUnits);
+  const neg = n < 0n;
+  const abs = neg ? -n : n;
+  const whole = abs / 1_000_000n;
+  const frac = abs % 1_000_000n;
+  const fracStr = frac.toString().padStart(6, "0").replace(/0+$/, "");
+  const result = fracStr.length > 0 ? `${whole.toString()}.${fracStr}` : whole.toString();
+  return neg ? `-${result}` : result;
 }
 
 function chainName(chainId: number): string {
@@ -73,7 +92,8 @@ function easscanAttestationUrl(chainId: number, uid: string): string | undefined
   return undefined;
 }
 
-function formatUsd(usd: number): string {
+/** Formats a plain float USD value (used only for opts.lifetime.totalUsd — a caller-supplied aggregate, not raw base units). */
+function formatLifetimeUsd(usd: number): string {
   return usd.toFixed(usd < 1 ? 3 : 2).replace(/0+$/, "").replace(/\.$/, "");
 }
 
@@ -83,18 +103,17 @@ function formatUsd(usd: number): string {
  * and sendWebhook/sendTelegram/sendDiscord/sendSlack for delivery.
  */
 export function renderMoment(receipt: Receipt, opts: RenderMomentOptions = {}): Moment {
-  const usd = usdcAmountToUsd(receipt.payment.amount);
-  const tier = tierFor(usd);
+  const tier = tierForAmount(receipt.payment.amount);
   const productName = opts.productName ?? "a paid API call";
   const sellerName = opts.sellerName ?? "Your agent";
   const chain = chainName(receipt.payment.chain_id);
 
   const lines: string[] = [
     `${sellerName} just sold ${productName} to an AI agent`,
-    `+${formatUsd(usd)} USDC — settled on ${chain} ✓`,
+    `+${formatUsdExact(receipt.payment.amount)} USDC — settled on ${chain} ✓`,
   ];
   if (opts.lifetime) {
-    lines.push(`Lifetime: $${formatUsd(opts.lifetime.totalUsd)} across ${opts.lifetime.count} sales`);
+    lines.push(`Lifetime: $${formatLifetimeUsd(opts.lifetime.totalUsd)} across ${opts.lifetime.count} sales`);
   }
   const signature = opts.signature === undefined ? DEFAULT_SIGNATURE : opts.signature;
   if (signature !== false) {
@@ -124,7 +143,12 @@ export function momentToText(moment: Moment): string {
   return parts.join("\n");
 }
 
-/** Markdown render (Slack/Discord) — bold title, link labels. */
+/**
+ * Generic markdown render — `[label](url)` links, `*bold*` title. Used by sendWebhook's
+ * payload for consumers with no specific platform dialect. Slack and Discord have
+ * different link syntax and bold syntax — use momentToSlackMrkdwn / momentToDiscordMarkdown
+ * for those, not this one.
+ */
 export function momentToMarkdown(moment: Moment): string {
   const parts = [`*${moment.title}*`, ...moment.lines];
   if (moment.links.settlement) parts.push(`[View settlement](${moment.links.settlement})`);
@@ -132,8 +156,34 @@ export function momentToMarkdown(moment: Moment): string {
   return parts.join("\n");
 }
 
+/** Slack mrkdwn — `*bold*` title, links as `<url|label>` (Slack's own link syntax). */
+export function momentToSlackMrkdwn(moment: Moment): string {
+  const parts = [`*${moment.title}*`, ...moment.lines];
+  if (moment.links.settlement) parts.push(`<${moment.links.settlement}|View settlement>`);
+  if (moment.links.anchor) parts.push(`<${moment.links.anchor}|View anchor>`);
+  return parts.join("\n");
+}
+
+/** Discord markdown — `**bold**` title, plain URLs (Discord auto-embeds/links bare URLs). */
+export function momentToDiscordMarkdown(moment: Moment): string {
+  const parts = [`**${moment.title}**`, ...moment.lines];
+  if (moment.links.settlement) parts.push(`View settlement: ${moment.links.settlement}`);
+  if (moment.links.anchor) parts.push(`View anchor: ${moment.links.anchor}`);
+  return parts.join("\n");
+}
+
 export interface EmailHTMLOptions {
   brandColor?: string;
+}
+
+const DEFAULT_BRAND_COLOR = "#00e5ff";
+/** CSS color keyword or hex (3-8 hex digits) — anything else falls back to DEFAULT_BRAND_COLOR
+ *  rather than being interpolated raw into a style attribute. */
+const SAFE_CSS_COLOR_RE = /^#[0-9a-fA-F]{3,8}$|^[a-zA-Z]+$/;
+
+function safeBrandColor(input?: string): string {
+  if (input && SAFE_CSS_COLOR_RE.test(input)) return input;
+  return DEFAULT_BRAND_COLOR;
 }
 
 function escapeHtml(s: string): string {
@@ -152,7 +202,7 @@ function escapeHtml(s: string): string {
  * receipt this moment is backed by.
  */
 export function momentToEmailHTML(moment: Moment, opts: EmailHTMLOptions = {}): string {
-  const brand = opts.brandColor ?? "#00e5ff";
+  const brand = safeBrandColor(opts.brandColor);
   const bg = "#0a0e1c";
   const bodyLines = moment.signature
     ? moment.lines.slice(0, -1)
@@ -241,6 +291,8 @@ function momentPayload(moment: Moment) {
     moment,
     text: momentToText(moment),
     markdown: momentToMarkdown(moment),
+    slack: momentToSlackMrkdwn(moment),
+    discord: momentToDiscordMarkdown(moment),
   };
 }
 
@@ -276,7 +328,12 @@ export interface TelegramTarget {
   chatId: string | number;
 }
 
-/** Sends via the Telegram Bot API sendMessage. Never throws — see TransportResult. */
+/**
+ * Sends via the Telegram Bot API sendMessage. Never throws — see TransportResult. The
+ * bot token is embedded in the request URL; if delivery fails, any occurrence of the
+ * token in the resulting error string is redacted (defense in depth — a fetch
+ * implementation could echo the request URL back in an error message).
+ */
 export async function sendTelegram(
   target: TelegramTarget,
   moment: Moment,
@@ -284,27 +341,31 @@ export async function sendTelegram(
 ): Promise<TransportResult> {
   const fetchFn = opts.fetchFn ?? globalThis.fetch;
   const url = `https://api.telegram.org/bot${target.botToken}/sendMessage`;
-  return post(url, { chat_id: target.chatId, text: momentToText(moment) }, fetchFn);
+  const result = await post(url, { chat_id: target.chatId, text: momentToText(moment) }, fetchFn);
+  if (result.error) {
+    return { ...result, error: result.error.split(target.botToken).join("<token>") };
+  }
+  return result;
 }
 
-/** Sends to a Discord incoming webhook. Never throws — see TransportResult. */
+/** Sends to a Discord incoming webhook, using Discord's markdown dialect. Never throws — see TransportResult. */
 export async function sendDiscord(
   webhookUrl: string,
   moment: Moment,
   opts: TransportOptions = {}
 ): Promise<TransportResult> {
   const fetchFn = opts.fetchFn ?? globalThis.fetch;
-  return post(webhookUrl, { content: momentToMarkdown(moment) }, fetchFn);
+  return post(webhookUrl, { content: momentToDiscordMarkdown(moment) }, fetchFn);
 }
 
-/** Sends to a Slack incoming webhook. Never throws — see TransportResult. */
+/** Sends to a Slack incoming webhook, using Slack's mrkdwn dialect. Never throws — see TransportResult. */
 export async function sendSlack(
   webhookUrl: string,
   moment: Moment,
   opts: TransportOptions = {}
 ): Promise<TransportResult> {
   const fetchFn = opts.fetchFn ?? globalThis.fetch;
-  return post(webhookUrl, { text: momentToMarkdown(moment) }, fetchFn);
+  return post(webhookUrl, { text: momentToSlackMrkdwn(moment) }, fetchFn);
 }
 
 // Email SENDING is deliberately NOT included here — this library stays zero-dep, and

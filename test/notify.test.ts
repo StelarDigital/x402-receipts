@@ -1,7 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  momentToDiscordMarkdown,
   momentToEmailHTML,
   momentToMarkdown,
+  momentToSlackMrkdwn,
   momentToText,
   renderMoment,
   sendDiscord,
@@ -43,6 +45,28 @@ describe("renderMoment: drama tiers", () => {
     expect(renderMoment(receiptWithAmount("1000000")).title).toBe("🔥 AGENT SALE");
     expect(renderMoment(receiptWithAmount("10000000")).title).toBe("💰 BIG AGENT SALE");
     expect(renderMoment(receiptWithAmount("100000000")).title).toBe("💎🚀 HUGE AGENT SALE");
+  });
+
+  it("display never contradicts tier at the just-under-$1 boundary (999999 base units)", () => {
+    const moment = renderMoment(receiptWithAmount("999999"));
+    expect(moment.tier).toBe("spark");
+    expect(moment.lines[1]).toContain("+0.999999 USDC");
+  });
+
+  it("displays the smallest possible unit exactly (1 base unit = $0.000001)", () => {
+    const moment = renderMoment(receiptWithAmount("1"));
+    expect(moment.tier).toBe("spark");
+    expect(moment.lines[1]).toContain("+0.000001 USDC");
+  });
+
+  it("buckets and displays a value past Number.MAX_SAFE_INTEGER exactly via BigInt", () => {
+    // 2^53 = 9007199254740992 base units, well past Number.MAX_SAFE_INTEGER — a
+    // Number-based parse would silently lose precision here. In dollars (6 decimals)
+    // that's exactly 9007199254.740992 USDC.
+    const huge = "9007199254740992";
+    const moment = renderMoment(receiptWithAmount(huge));
+    expect(moment.tier).toBe("diamond");
+    expect(moment.lines[1]).toContain("+9007199254.740992 USDC");
   });
 });
 
@@ -181,6 +205,33 @@ describe("momentToText / momentToMarkdown", () => {
   });
 });
 
+describe("momentToSlackMrkdwn / momentToDiscordMarkdown: platform dialects", () => {
+  const moment: Moment = {
+    title: "🔥 AGENT SALE",
+    lines: ["Your agent just sold a paid API call to an AI agent", "+1 USDC — settled on Base ✓"],
+    links: { settlement: "https://basescan.org/tx/0xabc", anchor: "https://base.easscan.org/attestation/view/0xdead" },
+    tier: "fire",
+  };
+
+  it("momentToSlackMrkdwn uses *bold* and Slack's <url|label> link syntax", () => {
+    const md = momentToSlackMrkdwn(moment);
+    expect(md).toContain("*🔥 AGENT SALE*");
+    expect(md).toContain("<https://basescan.org/tx/0xabc|View settlement>");
+    expect(md).toContain("<https://base.easscan.org/attestation/view/0xdead|View anchor>");
+    expect(md).not.toContain("**");
+    expect(md).not.toContain("[View settlement]");
+  });
+
+  it("momentToDiscordMarkdown uses **bold** and plain URLs", () => {
+    const md = momentToDiscordMarkdown(moment);
+    expect(md).toContain("**🔥 AGENT SALE**");
+    expect(md).toContain("View settlement: https://basescan.org/tx/0xabc");
+    expect(md).toContain("View anchor: https://base.easscan.org/attestation/view/0xdead");
+    expect(md).not.toContain("[View settlement]");
+    expect(md).not.toContain("<https://basescan.org/tx/0xabc|");
+  });
+});
+
 describe("momentToEmailHTML", () => {
   const moment: Moment = {
     title: "💰 BIG AGENT SALE",
@@ -218,6 +269,19 @@ describe("momentToEmailHTML", () => {
     expect(html).toContain("#ff00ff");
   });
 
+  it("accepts a named CSS color", () => {
+    const html = momentToEmailHTML(moment, { brandColor: "orange" });
+    expect(html).toContain("orange");
+  });
+
+  it("falls back to the default brand color when brandColor cannot be a valid attribute value", () => {
+    const malicious = '"></td></tr></table><script>alert(1)</script>';
+    const html = momentToEmailHTML(moment, { brandColor: malicious });
+    expect(html).not.toContain(malicious);
+    expect(html).not.toContain("<script>");
+    expect(html).toContain("#00e5ff");
+  });
+
   it("includes the receipts footer", () => {
     const html = momentToEmailHTML(moment);
     expect(html).toContain("backed by an x402 receipt");
@@ -249,7 +313,7 @@ const moment: Moment = {
 };
 
 describe("transports", () => {
-  it("sendWebhook POSTs JSON with moment/text/markdown to the given URL", async () => {
+  it("sendWebhook POSTs JSON with moment/text/markdown/slack/discord to the given URL", async () => {
     const fetchFn = vi.fn().mockResolvedValue({ ok: true, status: 200 });
     const result = await sendWebhook("https://example.com/hook", moment, { fetchFn: fetchFn as any });
 
@@ -262,6 +326,8 @@ describe("transports", () => {
     expect(body.moment).toEqual(moment);
     expect(body.text).toBe(momentToText(moment));
     expect(body.markdown).toBe(momentToMarkdown(moment));
+    expect(body.slack).toBe(momentToSlackMrkdwn(moment));
+    expect(body.discord).toBe(momentToDiscordMarkdown(moment));
   });
 
   it("sendTelegram POSTs to the bot API with chat_id and text", async () => {
@@ -276,7 +342,16 @@ describe("transports", () => {
     expect(body.text).toBe(momentToText(moment));
   });
 
-  it("sendDiscord POSTs {content: markdown} to the webhook URL", async () => {
+  it("sendTelegram redacts the bot token from any error message", async () => {
+    const fetchFn = vi.fn().mockRejectedValue(new Error("fetch failed for https://api.telegram.org/botSECRET123/sendMessage"));
+    const result = await sendTelegram({ botToken: "SECRET123", chatId: 1 }, moment, { fetchFn: fetchFn as any });
+
+    expect(result.ok).toBe(false);
+    expect(result.error).not.toContain("SECRET123");
+    expect(result.error).toContain("<token>");
+  });
+
+  it("sendDiscord POSTs {content: discord markdown} to the webhook URL", async () => {
     const fetchFn = vi.fn().mockResolvedValue({ ok: true, status: 204 });
     const result = await sendDiscord("https://discord.com/api/webhooks/x", moment, {
       fetchFn: fetchFn as any,
@@ -285,10 +360,11 @@ describe("transports", () => {
     expect(result.ok).toBe(true);
     const [, init] = fetchFn.mock.calls[0];
     const body = JSON.parse(init.body);
-    expect(body.content).toBe(momentToMarkdown(moment));
+    expect(body.content).toBe(momentToDiscordMarkdown(moment));
+    expect(body.content).toContain("**🔥 AGENT SALE**");
   });
 
-  it("sendSlack POSTs {text: markdown} to the webhook URL", async () => {
+  it("sendSlack POSTs {text: slack mrkdwn} to the webhook URL", async () => {
     const fetchFn = vi.fn().mockResolvedValue({ ok: true, status: 200 });
     const result = await sendSlack("https://hooks.slack.com/services/x", moment, {
       fetchFn: fetchFn as any,
@@ -297,7 +373,8 @@ describe("transports", () => {
     expect(result.ok).toBe(true);
     const [, init] = fetchFn.mock.calls[0];
     const body = JSON.parse(init.body);
-    expect(body.text).toBe(momentToMarkdown(moment));
+    expect(body.text).toBe(momentToSlackMrkdwn(moment));
+    expect(body.text).toContain("*🔥 AGENT SALE*");
   });
 
   it("never throws when fetch rejects, for every transport", async () => {
