@@ -6,10 +6,20 @@ export type Address = `0x${string}`;
 export interface PaymentInfo {
   chain_id: number;
   tx_hash: Hex;
+  /**
+   * Either a legacy symbol (e.g. "USDC") or a CAIP-19 asset id / raw contract address.
+   * Prefer `asset_address` for unambiguous on-chain contract binding (v0.3).
+   */
   asset: string;
   amount: string;
   payer: Address;
   payee: Address;
+  /**
+   * Optional (v0.3): the token's contract address (or CAIP-19 id), bound alongside
+   * `asset` so a verifier doesn't have to resolve a symbol to a contract itself. See
+   * settlement.ts resolveAssetContract / BASE_USDC.
+   */
+  asset_address?: string;
 }
 
 export interface RequestInfo {
@@ -17,6 +27,30 @@ export interface RequestInfo {
   url_hash: string;
   params_hash: string;
   ts: string;
+  /**
+   * Optional (v0.3): sha256 of the canonicalized payment requirements the buyer agreed
+   * to (see `hashPaymentRequirements`). Lets a verifier confirm the receipt is bound to
+   * the exact requirements the buyer was quoted, not a substituted one.
+   */
+  payment_requirements_sha256?: string;
+}
+
+/**
+ * The payment requirements a buyer agrees to before paying (v0.3). Canonicalized and
+ * hashed via `hashPaymentRequirements` into `request.payment_requirements_sha256`.
+ */
+export interface PaymentRequirements {
+  payTo: string;
+  amount: string;
+  asset: string;
+  scheme: string;
+  resource: string;
+  timeout: number;
+}
+
+/** sha256 of the canonicalized payment requirements object (v0.3). */
+export function hashPaymentRequirements(req: PaymentRequirements): string {
+  return canonicalDigest(req);
 }
 
 export interface ResponseInfo {
@@ -65,6 +99,17 @@ export interface GoodsInfo {
   preview: string | null;
 }
 
+export type DeliveryStatus = "delivered" | "failed" | "partial";
+
+/**
+ * Optional (v0.3) seller-declared delivery outcome. Excluded from the seller signature
+ * payload, same trust level as `goods` — see verify.ts deliveryStatusOk and
+ * verifyReceipt's goods+delivery=failed check for what this does and doesn't prove.
+ */
+export interface DeliveryInfo {
+  status: DeliveryStatus;
+}
+
 export interface Receipt {
   scheme: "x402-receipts/v0";
   payment: PaymentInfo;
@@ -75,6 +120,8 @@ export interface Receipt {
   anchor: AnchorInfo | null;
   /** Optional goods attestation. Omitted entirely (not even `null`) unless explicitly provided. */
   goods?: GoodsInfo | null;
+  /** Optional (v0.3) delivery outcome. Omitted entirely (not even `null`) unless explicitly provided. */
+  delivery?: DeliveryInfo | null;
 }
 
 export interface BuildReceiptInput {
@@ -83,6 +130,7 @@ export interface BuildReceiptInput {
   response: ResponseInfo;
   seller_agent_id: string;
   goods?: GoodsInfo | null;
+  delivery?: DeliveryInfo | null;
 }
 
 /**
@@ -106,6 +154,9 @@ export function buildReceipt(input: BuildReceiptInput): Receipt {
       input.goods === null
         ? null
         : { ...input.goods, summary: input.goods.summary ? { ...input.goods.summary } : null };
+  }
+  if (input.delivery !== undefined) {
+    receipt.delivery = input.delivery === null ? null : { ...input.delivery };
   }
   return receipt;
 }

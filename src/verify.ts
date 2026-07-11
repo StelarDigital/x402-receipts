@@ -1,7 +1,7 @@
-import type { Address, GoodsInfo, Receipt } from "./receipt.js";
+import type { Address, GoodsInfo, PaymentRequirements, Receipt } from "./receipt.js";
 import { verifyBuyerCountersig, verifySellerSig } from "./sign.js";
 import { verifyInclusion, type MerkleProofStep } from "./merkle.js";
-import { receiptDigest, sha256Hex } from "./receipt.js";
+import { hashPaymentRequirements, receiptDigest, sha256Hex } from "./receipt.js";
 import { sanitizePreview } from "./middleware.js";
 
 export interface VerifyReceiptOptions {
@@ -20,6 +20,13 @@ export interface VerifyReceiptOptions {
    * reputation scoring must never treat such a receipt as evidence of a real counterparty.
    */
   rejectSelfDeal?: boolean;
+  /**
+   * If provided AND the receipt carries `request.payment_requirements_sha256`, the
+   * requirements are re-canonicalized/hashed and compared against the stored value —
+   * a mismatch fails verification. Absent on either side, this check is skipped
+   * (additive: old receipts with no `payment_requirements_sha256` are unaffected).
+   */
+  paymentRequirements?: PaymentRequirements;
 }
 
 export interface VerifyReceiptResult {
@@ -96,7 +103,34 @@ export async function verifyReceipt(
     errors.push("goods.body_sha256 does not match response.body_sha256 (goods binding broken)");
   }
 
+  if (
+    options.paymentRequirements &&
+    receipt.request.payment_requirements_sha256 &&
+    hashPaymentRequirements(options.paymentRequirements) !== receipt.request.payment_requirements_sha256
+  ) {
+    errors.push("payment_requirements_sha256 mismatch: recomputed hash does not match the receipt's claimed hash");
+  }
+
+  if (receipt.goods && receipt.delivery && receipt.delivery.status !== "delivered") {
+    errors.push(
+      `goods present but delivery.status is "${receipt.delivery.status}" (not "delivered"): cannot verify as a successful delivery`
+    );
+  }
+
   return { valid: errors.length === 0, errors };
+}
+
+/**
+ * Explicit result flag (never throws) for whether a receipt's optional `delivery` block
+ * claims a successful delivery. A receipt with no `delivery` block makes no claim either
+ * way and is treated as ok (old behavior, additive field). A receipt whose
+ * `delivery.status` is "failed" or "partial" MUST NOT be treated as a successful
+ * delivery receipt by callers gating on this — see also verifyReceipt's
+ * goods+delivery=failed check, which fails `valid` outright when goods are attached.
+ */
+export function deliveryStatusOk(receipt: Receipt): boolean {
+  if (!receipt.delivery) return true;
+  return receipt.delivery.status === "delivered";
 }
 
 export interface VerifyGoodsResult {
