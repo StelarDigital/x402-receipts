@@ -12,7 +12,7 @@ Base mainnet: [`0xf699…ced33`](https://base.easscan.org/attestation/view/0xf69
 (schema [`0xfb77…464d`](https://base.easscan.org/schema/view/0xfb77eeddebcffed10572b3070923232c07426ec52b033ddaa17c2cb8f040464d)).
 This is a working reference deployment, not a mock.
 
-## x402'd — the cha-ching layer (receipts your humans can feel)
+## x402'd™ — the cha-ching layer (receipts your humans can feel)
 
 A settled payment is data. A sale is a moment. Most integrations render the former and
 lose the latter:
