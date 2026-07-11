@@ -7,6 +7,11 @@ binds the payment to fingerprints of the exact request and response, appends it 
 local append-only JSONL ledger, and batches receipt digests into merkle roots for cheap
 on-chain anchoring.
 
+**Live on-chain proof** — the first receipt anchor is a verifiable EAS attestation on
+Base mainnet: [`0xf699…ced33`](https://base.easscan.org/attestation/view/0xf6995000d125c074074a5afdf35ddfb451227a2bc71c88cf6659926d192ced33)
+(schema [`0xfb77…464d`](https://base.easscan.org/schema/view/0xfb77eeddebcffed10572b3070923232c07426ec52b033ddaa17c2cb8f040464d)).
+This is a working reference deployment, not a mock.
+
 ## Why
 
 x402 (and the underlying chain) proves that money moved. It proves nothing about
