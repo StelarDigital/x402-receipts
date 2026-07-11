@@ -1,7 +1,8 @@
-import type { Address, Receipt } from "./receipt.js";
+import type { Address, GoodsInfo, Receipt } from "./receipt.js";
 import { verifyBuyerCountersig, verifySellerSig } from "./sign.js";
 import { verifyInclusion, type MerkleProofStep } from "./merkle.js";
-import { receiptDigest } from "./receipt.js";
+import { receiptDigest, sha256Hex } from "./receipt.js";
+import { sanitizePreview } from "./middleware.js";
 
 export interface VerifyReceiptOptions {
   /** Address expected to have produced seller.sig. Defaults to receipt.payment.payee. */
@@ -91,7 +92,45 @@ export async function verifyReceipt(
     errors.push("response body_sha256 mismatch");
   }
 
+  if (receipt.goods && receipt.goods.body_sha256 !== receipt.response.body_sha256) {
+    errors.push("goods.body_sha256 does not match response.body_sha256 (goods binding broken)");
+  }
+
   return { valid: errors.length === 0, errors };
+}
+
+export interface VerifyGoodsResult {
+  ok: boolean;
+  reason?: string;
+}
+
+/**
+ * Recomputes sha256 + byte length of the actual delivered body and checks them against
+ * a GoodsInfo block, plus (if goods.preview is non-null) that the preview is a prefix of
+ * the same sanitization applied to the body. This proves the goods block genuinely
+ * describes THESE bytes — it does not and cannot verify that goods.description or
+ * goods.summary are honest characterizations of the bytes; those remain seller claims.
+ */
+export function verifyGoodsAgainstBody(body: string | Uint8Array, goods: GoodsInfo): VerifyGoodsResult {
+  const actualSha256 = sha256Hex(body);
+  if (actualSha256 !== goods.body_sha256) {
+    return { ok: false, reason: "body_sha256 mismatch" };
+  }
+
+  const actualBytes = typeof body === "string" ? Buffer.byteLength(body, "utf8") : body.length;
+  if (actualBytes !== goods.bytes) {
+    return { ok: false, reason: "bytes mismatch" };
+  }
+
+  if (goods.preview !== null) {
+    const bodyStr = typeof body === "string" ? body : Buffer.from(body).toString("utf8");
+    const sanitizedBody = sanitizePreview(bodyStr, Number.POSITIVE_INFINITY);
+    if (!sanitizedBody.startsWith(goods.preview)) {
+      return { ok: false, reason: "preview is not a prefix of the sanitized body" };
+    }
+  }
+
+  return { ok: true };
 }
 
 /**

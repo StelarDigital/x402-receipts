@@ -174,7 +174,8 @@ one for the other.
   "response": { "status": number, "body_sha256": sha256hex, "content_type": string, "ts": iso8601, "latency_ms": number },
   "seller":   { "erc8004_agent_id": string, "sig": eip712sig },
   "buyer":    { "countersig": eip712sig | null },
-  "anchor":   { "batch_merkle_root": hex, "base_tx": hex, "leaf_index": number } | null
+  "anchor":   { "batch_merkle_root": hex, "base_tx": hex, "leaf_index": number } | null,
+  "goods":    { "description": string, "kind": "api-response"|"file"|"dataset"|"text"|"other", "summary": object | null, "body_sha256": sha256hex, "bytes": number, "preview": string | null } | null | undefined
 }
 ```
 
@@ -190,6 +191,82 @@ one for the other.
   (M2b — see "On-chain anchoring (EAS on Base)" and "Status" below; this library does
   not currently populate `anchor` on the `Receipt` object automatically, callers do so
   after `anchorBatch` returns a UID and an inclusion proof is available).
+
+## Goods on the receipt
+
+A receipt on its own only proves *that* a payment settled and *a* response body
+existed with a given hash — it says nothing human-readable about what was actually
+delivered. The optional `goods` block lets a seller declare what the payment bought,
+bound to the exact delivered bytes:
+
+```json
+{
+  "scheme": "x402-receipts/v0",
+  "payment":  { "chain_id": 8453, "tx_hash": "0x...", "asset": "USDC", "amount": "1000000", "payer": "0x...", "payee": "0x..." },
+  "request":  { "method": "GET", "url_hash": "...", "params_hash": "...", "ts": "2026-07-11T12:00:00.000Z" },
+  "response": { "status": 200, "body_sha256": "e3b0c4...", "content_type": "application/json", "ts": "2026-07-11T12:00:00.400Z", "latency_ms": 400 },
+  "seller":   { "erc8004_agent_id": "erc8004:8453:0x...", "sig": "0x..." },
+  "buyer":    { "countersig": null },
+  "anchor":   null,
+  "goods": {
+    "description": "market-brief: SOL regime+sentiment+price+risk",
+    "kind": "api-response",
+    "summary": { "symbol": "SOL-USD", "regime": "trending", "risk": "medium" },
+    "body_sha256": "e3b0c4...",
+    "bytes": 214,
+    "preview": "{\"symbol\":\"SOL-USD\",\"regime\":\"trending\",...}"
+  }
+}
+```
+
+**What this proves:** `goods.body_sha256` and `goods.bytes` are checked against the
+actual delivered body by `verifyGoodsAgainstBody` (recomputes sha256 + byte length, and
+if `goods.preview` is non-null, checks it's a prefix of the sanitized body). This proves
+the `goods` block genuinely describes *these exact bytes* — not some other response.
+`verifyReceipt` additionally fails any receipt where `goods.body_sha256` doesn't equal
+`response.body_sha256` (the receipt-level binding).
+
+**What this doesn't prove:** `goods.description` and `goods.summary` are seller
+*claims*, not independently verified facts. The hash binding proves "this description
+is talking about these bytes," not "this description is an honest characterization of
+those bytes." `goods` is deliberately excluded from the seller's EIP-712 signature
+payload (`receiptCore`) — the signature already commits to `response.body_sha256`, and
+`goods.body_sha256` is required to match it, so the delivered bytes stay authenticated
+either way, while `goods` fields stay purely additive and backwards-compatible (a
+receipt without `goods` canonicalizes identically to a pre-goods-feature receipt; the
+key is omitted entirely, not set to `null`).
+
+`goods` is optional everywhere: `buildReceipt` only attaches it when explicitly passed,
+and `createReceiptMiddleware` only computes it when a `goods` describer is configured
+AND the settlement result includes the raw `body` — otherwise receipts are built exactly
+as before.
+
+```ts
+import { createReceiptMiddleware } from "x402-receipts";
+
+const receipts = createReceiptMiddleware({
+  ledgerPath: "./receipts.jsonl",
+  sellerAgentId: "erc8004:8453:0xSellerAgent...",
+  sellerPrivateKey: process.env.SELLER_PRIVATE_KEY as `0x${string}`,
+  goods: ({ value }) => ({
+    description: "market-brief: SOL regime+sentiment+price+risk",
+    kind: "api-response",
+    summary: { symbol: value.symbol, regime: value.regime },
+  }),
+});
+
+const value = await receipts.wrap(async () => {
+  const settlement = await settleX402Payment(req);
+  const body = JSON.stringify(computeResponseBody(req));
+  return {
+    payment: settlement.paymentInfo,
+    request: { /* ... */ },
+    response: { status: 200, body_sha256: sha256Hex(body), content_type: "application/json", ts: new Date().toISOString(), latency_ms: settlement.latencyMs },
+    value: JSON.parse(body),
+    body, // required for the goods describer to run; body_sha256/bytes/preview are computed from this, never trusted from the caller
+  };
+});
+```
 
 ## Usage
 
