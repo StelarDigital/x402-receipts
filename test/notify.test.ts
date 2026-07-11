@@ -77,6 +77,34 @@ describe("renderMoment: lines", () => {
   });
 });
 
+describe("renderMoment: signature sign-off", () => {
+  it("appends the default phrase as the final line", () => {
+    const moment = renderMoment(receiptWithAmount("1000000"));
+    expect(moment.lines[moment.lines.length - 1]).toBe("You've been x402'd.");
+    expect(moment.signature).toBe("You've been x402'd.");
+  });
+
+  it("omits the signature entirely when opts.signature is false", () => {
+    const moment = renderMoment(receiptWithAmount("1000000"), { signature: false });
+    expect(moment.lines).not.toContain("You've been x402'd.");
+    expect(moment.signature).toBeUndefined();
+  });
+
+  it("uses a custom signature string when provided", () => {
+    const moment = renderMoment(receiptWithAmount("1000000"), { signature: "Nice." });
+    expect(moment.lines[moment.lines.length - 1]).toBe("Nice.");
+    expect(moment.signature).toBe("Nice.");
+  });
+
+  it("keeps the signature after the lifetime line", () => {
+    const moment = renderMoment(receiptWithAmount("1000000"), {
+      lifetime: { totalUsd: 12.5, count: 7 },
+    });
+    expect(moment.lines[moment.lines.length - 1]).toBe("You've been x402'd.");
+    expect(moment.lines[moment.lines.length - 2]).toBe("Lifetime: $12.5 across 7 sales");
+  });
+});
+
 describe("renderMoment: chain name mapping", () => {
   it("8453 -> Base", () => {
     const moment = renderMoment(receiptWithAmount("1000000", { chain_id: 8453 }));
@@ -159,9 +187,11 @@ describe("momentToEmailHTML", () => {
     lines: [
       "Stelar just sold live P&L telemetry to an AI agent",
       "+15 USDC — settled on Base ✓",
+      "You've been x402'd.",
     ],
     links: { settlement: "https://basescan.org/tx/0xabc" },
     tier: "gold",
+    signature: "You've been x402'd.",
   };
 
   it("is a self-contained HTML document", () => {
@@ -192,6 +222,22 @@ describe("momentToEmailHTML", () => {
     const html = momentToEmailHTML(moment);
     expect(html).toContain("backed by an x402 receipt");
     expect(html).toContain("x402-receipts");
+  });
+
+  it("renders the signature as the closing line above the footer, in subtle cyan italic", () => {
+    const html = momentToEmailHTML(moment);
+    expect(html).toContain("You&#39;ve been x402&#39;d.");
+    const sigIndex = html.indexOf("You&#39;ve been x402&#39;d.");
+    const footerIndex = html.indexOf("backed by an x402 receipt");
+    expect(sigIndex).toBeGreaterThan(-1);
+    expect(sigIndex).toBeLessThan(footerIndex);
+    expect(html).toContain("font-style:italic");
+  });
+
+  it("omits the signature block when moment.signature is unset", () => {
+    const noSig: Moment = { ...moment, signature: undefined, lines: moment.lines.slice(0, -1) };
+    const html = momentToEmailHTML(noSig);
+    expect(html).not.toContain("x402&#39;d");
   });
 });
 

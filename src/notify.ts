@@ -10,6 +10,8 @@ export interface Moment {
     anchor?: string;
   };
   tier: MomentTier;
+  /** The sign-off line, if any — also the last entry in `lines`. See RenderMomentOptions.signature. */
+  signature?: string;
 }
 
 export interface RenderMomentOptions {
@@ -25,7 +27,14 @@ export interface RenderMomentOptions {
    * (an anchor covers a whole batch, not a single receipt) — the caller supplies it.
    */
   anchorUID?: string;
+  /**
+   * The sign-off line appended to Moment.lines. Defaults to the coined phrase; pass
+   * `false` to omit it entirely.
+   */
+  signature?: string | false;
 }
+
+export const DEFAULT_SIGNATURE = "You've been x402'd.";
 
 const TIER_TITLES: Record<MomentTier, string> = {
   spark: "⚡ AGENT SALE",
@@ -87,6 +96,10 @@ export function renderMoment(receipt: Receipt, opts: RenderMomentOptions = {}): 
   if (opts.lifetime) {
     lines.push(`Lifetime: $${formatUsd(opts.lifetime.totalUsd)} across ${opts.lifetime.count} sales`);
   }
+  const signature = opts.signature === undefined ? DEFAULT_SIGNATURE : opts.signature;
+  if (signature !== false) {
+    lines.push(signature);
+  }
 
   const links: Moment["links"] = {};
   if (receipt.payment.tx_hash) {
@@ -98,7 +111,9 @@ export function renderMoment(receipt: Receipt, opts: RenderMomentOptions = {}): 
     if (url) links.anchor = url;
   }
 
-  return { title: TIER_TITLES[tier], lines, links, tier };
+  const moment: Moment = { title: TIER_TITLES[tier], lines, links, tier };
+  if (signature !== false) moment.signature = signature;
+  return moment;
 }
 
 /** Plain text render (Telegram/SMS/console) — emoji included. */
@@ -139,7 +154,10 @@ function escapeHtml(s: string): string {
 export function momentToEmailHTML(moment: Moment, opts: EmailHTMLOptions = {}): string {
   const brand = opts.brandColor ?? "#00e5ff";
   const bg = "#0a0e1c";
-  const [headline, ...rest] = moment.lines;
+  const bodyLines = moment.signature
+    ? moment.lines.slice(0, -1)
+    : moment.lines;
+  const [headline, ...rest] = bodyLines;
   const buttons: string[] = [];
   if (moment.links.settlement) {
     buttons.push(
@@ -186,6 +204,15 @@ export function momentToEmailHTML(moment: Moment, opts: EmailHTMLOptions = {}): 
                 ${buttons.join("\n                ")}
               </td>
             </tr>
+            ${
+              moment.signature
+                ? `<tr>
+              <td style="color:${brand};font-size:13px;font-style:italic;opacity:0.85;padding-top:24px;">
+                ${escapeHtml(moment.signature)}
+              </td>
+            </tr>`
+                : ""
+            }
             <tr>
               <td style="color:#5a6285;font-size:12px;padding-top:28px;border-top:1px solid #1e2542;margin-top:20px;">
                 backed by an x402 receipt · via x402-receipts

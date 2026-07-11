@@ -12,7 +12,7 @@ Base mainnet: [`0xf699…ced33`](https://base.easscan.org/attestation/view/0xf69
 (schema [`0xfb77…464d`](https://base.easscan.org/schema/view/0xfb77eeddebcffed10572b3070923232c07426ec52b033ddaa17c2cb8f040464d)).
 This is a working reference deployment, not a mock.
 
-## The cha-ching layer — receipts your humans can feel
+## x402'd — the cha-ching layer (receipts your humans can feel)
 
 A settled payment is data. A sale is a moment. Most integrations render the former and
 lose the latter:
@@ -30,16 +30,19 @@ production:
 Your agent just sold live P&L telemetry to an AI agent
 +0.005 USDC — settled on Base ✓
 Receipt: https://basescan.org/tx/0x...
+You've been x402'd.
 ```
 
 The second one is the product: **the emotion, not the balance change.** What makes it
 trustworthy instead of just marketing copy is that every line traces back to a signed,
 verifiable receipt field — the amount, the chain, the settlement link are the same
-`payment.*` data `verifyReceiptFull()` checks, not invented flavor text. `renderMoment()`
-turns a `Receipt` into that moment; `momentToText`/`momentToMarkdown`/`momentToEmailHTML`
-render it for Telegram, Slack/Discord, or email; `sendWebhook`/`sendTelegram`/
-`sendDiscord`/`sendSlack` deliver it (dependency-free, injectable `fetchFn`, never throw
-on delivery failure).
+`payment.*` data `verifyReceiptFull()` checks, not invented flavor text. This is what
+x402 alerts should feel like: a real-time nudge that an agent just paid a real seller,
+not a line item in a ledger. `renderMoment()` turns a `Receipt` into that moment;
+`momentToText`/`momentToMarkdown`/`momentToEmailHTML` render it for Telegram,
+Slack/Discord, or email; `sendWebhook`/`sendTelegram`/`sendDiscord`/`sendSlack` deliver
+it (dependency-free, injectable `fetchFn`, never throw on delivery failure). Every moment
+signs off with the phrase: *You've been x402'd.*
 
 ```ts
 import { renderMoment, momentToText, sendTelegram } from "x402-receipts";
