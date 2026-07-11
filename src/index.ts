@@ -7,3 +7,4 @@ export * from "./middleware.js";
 export * from "./anchor.js";
 export * from "./settlement.js";
 export * from "./reputation.js";
+export * from "./notify.js";
