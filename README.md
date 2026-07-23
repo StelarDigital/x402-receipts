@@ -12,6 +12,48 @@ Base mainnet: [`0xf699…ced33`](https://base.easscan.org/attestation/view/0xf69
 (schema [`0xfb77…464d`](https://base.easscan.org/schema/view/0xfb77eeddebcffed10572b3070923232c07426ec52b033ddaa17c2cb8f040464d)).
 This is a working reference deployment, not a mock.
 
+## Works with the Coinbase CDP x402 SDK
+
+Coinbase's [CDP x402 SDK](https://docs.cdp.coinbase.com/x402/core-concepts/cdp-sdk) solves
+the *paying* side: `CdpX402Client` and `createX402Server` pay for and gate x402 endpoints in
+a few lines, with CDP-managed wallets and a hosted facilitator, so there are no private keys
+to store. That settles the money — it proves a transfer happened, but says nothing about what
+the seller actually delivered for it. `x402-receipts` is the missing delivery-proof layer that
+rides on top: the same settled payment becomes a signed, verifiable proof-of-delivery receipt,
+bound to fingerprints of the exact request and response, that the buyer's agent can carry
+anywhere and anyone can re-check against Base.
+
+```ts
+// illustrative integration (CDP side untested — issues/PRs welcome)
+import { CdpX402Client } from "@coinbase/cdp-sdk/x402";
+import { wrapFetchWithPayment, decodePaymentResponseHeader } from "@x402/fetch";
+import { verifyReceiptFull } from "x402-receipts";
+
+// 1. Buyer pays for the endpoint with a CDP-managed wallet (no private keys held).
+const client = new CdpX402Client();
+const fetchWithPayment = wrapFetchWithPayment(fetch, client);
+const res = await fetchWithPayment("https://api.example.com/signal");
+
+// CDP has settled the payment; the decoded response carries the on-chain settlement
+// (network, tx hash, payer/payee) that maps onto a receipt's `payment` block.
+const settled = decodePaymentResponseHeader(res.headers.get("payment-response") ?? "");
+
+// 2. The seller issues a signed x402-receipts receipt from that same settled payment
+//    (built server-side with `createReceiptMiddleware`) and returns it alongside the body —
+//    e.g. in an `x402-receipt` response header or a field in the JSON.
+const receipt = JSON.parse(res.headers.get("x402-receipt") ?? "null");
+
+// 3. Buyer verifies the delivery proof against Base — no trust in the seller required.
+const check = await verifyReceiptFull(receipt, { rpcUrl: "https://mainnet.base.org" });
+if (!check.valid) throw new Error(`bad delivery proof: ${check.errors.join(", ")}`);
+```
+
+The seller half is exactly the `createReceiptMiddleware` flow shown under
+[Usage](#wrap-an-x402-settlement-handler-fail-open) below, fed from CDP's settled payment
+instead of a hand-rolled x402 handler. **Chain scope:** these attestations anchor and verify
+settlement on Base (where EAS is an OP-stack predeploy); CDP settles x402 on Base natively, so
+that is the path exercised here — the receipt schema itself is chain-agnostic.
+
 ## x402'd™ — the cha-ching layer (receipts your humans can feel)
 
 A settled payment is data. A sale is a moment. Most integrations render the former and
