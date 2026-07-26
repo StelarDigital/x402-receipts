@@ -234,3 +234,30 @@ export function receiptCore(receipt: Receipt) {
 export function receiptDigest(receipt: Receipt): string {
   return canonicalDigest(receipt);
 }
+
+/**
+ * v0.5: named alias of `canonicalize` for spec discoverability (x402-foundation/x402#2833
+ * "canonical envelope defined via RFC 8785 JCS canonicalization"). For this package's
+ * closed value domain — plain objects/arrays, strings, booleans, null, and finite
+ * non-NaN/non-Infinity/non-(-0) numbers, everything else already thrown by `sortKeys`
+ * above — sorted-key `JSON.stringify` output IS an RFC 8785 JSON Canonicalization Scheme
+ * serialization: (1) member-name ordering by UTF-16 code unit is JavaScript's default
+ * string sort; (2) RFC 8785 mandates the ECMAScript Number::toString algorithm for
+ * numbers, which is exactly what `JSON.stringify` already emits; (3) RFC 8785's string
+ * encoding is the same mandatory-escape JSON string encoding `JSON.stringify` produces,
+ * with no additional (locale/NFC) normalization required or performed. No separate JCS
+ * library is used: for this envelope shape one would only reimplement what V8's
+ * `JSON.stringify` already guarantees. See SPEC.md "Canonicalization" for the full
+ * argument and the edge cases (`sortKeys`) that make this safe.
+ */
+export const canonicalizeJCS = canonicalize;
+
+/**
+ * v0.5: sha256 of the JCS-canonical envelope. Alias of `receiptDigest` — identical
+ * function, kept under both names because the spec calls the digest `receiptDigest`
+ * (merkle-leaf usage, `verify.ts`/`anchor.ts`) while proposals on #2833 call it
+ * `envelopeDigest` (the canonical-envelope digest). Never diverges from `receiptDigest`.
+ */
+export function envelopeDigest(receipt: Receipt): string {
+  return receiptDigest(receipt);
+}
