@@ -2,6 +2,11 @@
 
 Signed proof-of-delivery middleware for [x402](https://x402.org) machine-commerce sellers.
 
+Normative spec (canonical envelope, extension-response placement, verification
+predicates, EAS batch-anchor schema draft, ERC-8183 binding): **[SPEC.md](./SPEC.md)**.
+Conformance vectors: **[vectors/VECTORS.md](./vectors/VECTORS.md)**. Changelog:
+**[CHANGELOG.md](./CHANGELOG.md)**.
+
 ## x402'd™ — the cha-ching layer (receipts your humans can feel)
 
 A settled payment is data, a sale is a moment — this library gives x402 sellers both.
@@ -71,7 +76,7 @@ anywhere and anyone can re-check against Base.
 // illustrative integration (CDP side untested — issues/PRs welcome)
 import { CdpX402Client } from "@coinbase/cdp-sdk/x402";
 import { wrapFetchWithPayment, decodePaymentResponseHeader } from "@x402/fetch";
-import { verifyReceiptFull } from "x402-receipts";
+import { verifyReceiptFull, receiptFromExtensions } from "x402-receipts";
 
 // 1. Buyer pays for the endpoint with a CDP-managed wallet (no private keys held).
 const client = new CdpX402Client();
@@ -83,9 +88,12 @@ const res = await fetchWithPayment("https://api.example.com/signal");
 const settled = decodePaymentResponseHeader(res.headers.get("payment-response") ?? "");
 
 // 2. The seller issues a signed x402-receipts receipt from that same settled payment
-//    (built server-side with `createReceiptMiddleware`) and returns it alongside the body —
-//    e.g. in an `x402-receipt` response header or a field in the JSON.
-const receipt = JSON.parse(res.headers.get("x402-receipt") ?? "null");
+//    (built server-side with `createReceiptMiddleware`) and places it at the canonical
+//    v0.5 location, extensions["delivery-receipt"] (see SPEC.md §2) — never a header as
+//    the primary path; a header, if present at all, MUST carry identical JSON and exists
+//    only as a fallback for transports that strip response bodies.
+const body = await res.json();
+const receipt = receiptFromExtensions(body.extensions);
 
 // 3. Buyer verifies the delivery proof against Base — no trust in the seller required.
 const check = await verifyReceiptFull(receipt, { rpcUrl: "https://mainnet.base.org" });
@@ -391,6 +399,30 @@ version, not the scheme string.
   `verifyBuyerCountersig` try the v0.3 domain first, then fall back to the legacy v0
   domain, so receipts signed before this release keep verifying with no changes on
   either side.
+
+## v0.5 additions
+
+Full normative spec: **[SPEC.md](./SPEC.md)**. Summary — response to reviewer follow-up
+on [x402-foundation/x402#2833](https://github.com/x402-foundation/x402/issues/2833):
+
+- **Canonical envelope, RFC 8785 JCS.** `canonicalizeJCS`/`envelopeDigest` — named
+  aliases of `canonicalize`/`receiptDigest`, byte-identical output, no new dependency.
+  SPEC.md §1 argues why this package's existing sorted-key serialization already
+  satisfies JCS for its value domain.
+- **`extensions["delivery-receipt"]`** is now the canonical placement for a receipt on
+  an x402 v2 payment response (`attachReceiptExtension`/`receiptFromExtensions`,
+  SPEC.md §2). Any header carrying the same receipt is a documented `@deprecated`
+  projection (`projectReceiptHeader`), never primary — retracting the header-primary
+  framing this README used before v0.5.
+- **EAS batch-envelope schema** documented as a Foundation-ownable field table
+  (SPEC.md §6) over the already-live `ANCHOR_SCHEMA`, plus a draft (unregistered)
+  `receiptsHash` addition.
+- **ERC-8183 binding statement** (SPEC.md §7):
+  `attestationHash = envelopeDigest(receipt)`.
+- **Conformance vectors** (`vectors/`, `vectors/VECTORS.md`): one PASS vector from a real
+  settled Base mainnet tx, three negative vectors each pinned to one named predicate.
+- **Merkle inclusion verification** (`verifyInclusion`/`verifyAnchored`) was already
+  implemented pre-v0.5; SPEC.md §8 documents it against this spec explicitly.
 
 ## Usage
 
