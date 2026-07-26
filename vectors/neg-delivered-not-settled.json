@@ -1,0 +1,49 @@
+{
+  "id": "neg-delivered-not-settled",
+  "description": "Seller claims delivery.status=delivered, but tx_hash is a SYNTHETIC transaction (clearly not the real tx used in the PASS vector) whose mocked receipt status is 'reverted' — the payment never actually settled on-chain. Must fail closed on the settlement predicate regardless of the delivery claim.",
+  "predicate": "verifySettlement(receipt,{client:mockReverted}).settled === false with an error matching /did not succeed on-chain/",
+  "vectorSellerAddress": "0xC49Adc1ef48fC1D237d55379Fef7F3142cE22468",
+  "vectorBuyerAddress": "0x9643BCAA03e8c5774979001750b44f1D56D0273b",
+  "mockOnChain": {
+    "status": "reverted",
+    "blockNumber": 100,
+    "currentBlock": 103,
+    "transferLog": null
+  },
+  "receipt": {
+    "scheme": "x402-receipts/v0",
+    "payment": {
+      "chain_id": 8453,
+      "tx_hash": "0xdededededededededededededededededededededededededededededededede",
+      "asset": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+      "asset_address": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+      "amount": "5000",
+      "payer": "0xe61Bd34fcEdF14E0b41B582166eed69E3a6deF89",
+      "payee": "0x32d711C66dD1AD0c42D0cFe48e58ee5f2dE7c243"
+    },
+    "request": {
+      "method": "GET",
+      "url_hash": "84d14f74996f93224e9e9db28ff4a39b5cc45b443486a3bb2c5bf0f3546ab7d8",
+      "params_hash": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+      "ts": "2026-07-11T21:03:55Z"
+    },
+    "response": {
+      "status": 200,
+      "body_sha256": "5545e4424324ee42fd5b739544f462a47b81f122b02ec859af986e9316fadee4",
+      "content_type": "application/json",
+      "ts": "2026-07-11T21:03:55Z",
+      "latency_ms": 296
+    },
+    "seller": {
+      "erc8004_agent_id": "erc8004:8453:0x32d711C66dD1AD0c42D0cFe48e58ee5f2dE7c243",
+      "sig": "0x7fd728feaf0c88b6429c088bc56db247e9ee5db96e5c9fb5c801fb80989f565a0ac5e673dfc790706c4e6488f5d75fd50788300a4881f862d0a42a10696f248a1b"
+    },
+    "buyer": {
+      "countersig": null
+    },
+    "anchor": null,
+    "delivery": {
+      "status": "delivered"
+    }
+  }
+}

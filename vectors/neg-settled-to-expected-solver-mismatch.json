@@ -1,0 +1,54 @@
+{
+  "id": "neg-settled-to-expected-solver-mismatch",
+  "description": "Receipt claims payee = the expected solver/seller address, and delivery.status=delivered, but the mocked on-chain Transfer log (same asset/amount/chain as the PASS vector) actually moved funds to a DIFFERENT address (WRONG_SOLVER) — modeling a solver-substitution/front-running scenario where settlement happened but not to the party the receipt names. Must fail closed on the settlement predicate.",
+  "predicate": "verifySettlement(receipt,{client:mockWrongRecipient}).settled === false with an error matching /none match the receipt/",
+  "vectorSellerAddress": "0xC49Adc1ef48fC1D237d55379Fef7F3142cE22468",
+  "vectorBuyerAddress": "0x9643BCAA03e8c5774979001750b44f1D56D0273b",
+  "mockOnChain": {
+    "status": "success",
+    "blockNumber": 100,
+    "currentBlock": 103,
+    "transferLog": {
+      "contract": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+      "from": "0xe61Bd34fcEdF14E0b41B582166eed69E3a6deF89",
+      "to": "0x000000000000000000000000000000000BADBAD",
+      "value": "5000"
+    }
+  },
+  "receipt": {
+    "scheme": "x402-receipts/v0",
+    "payment": {
+      "chain_id": 8453,
+      "tx_hash": "0xdeb5872c039a88ae37b66ae490c0c8da9b6a4c652d84494ddcc9a05211d6cc80",
+      "asset": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+      "asset_address": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+      "amount": "5000",
+      "payer": "0xe61Bd34fcEdF14E0b41B582166eed69E3a6deF89",
+      "payee": "0x32d711C66dD1AD0c42D0cFe48e58ee5f2dE7c243"
+    },
+    "request": {
+      "method": "GET",
+      "url_hash": "84d14f74996f93224e9e9db28ff4a39b5cc45b443486a3bb2c5bf0f3546ab7d8",
+      "params_hash": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+      "ts": "2026-07-11T21:03:55Z"
+    },
+    "response": {
+      "status": 200,
+      "body_sha256": "5545e4424324ee42fd5b739544f462a47b81f122b02ec859af986e9316fadee4",
+      "content_type": "application/json",
+      "ts": "2026-07-11T21:03:55Z",
+      "latency_ms": 296
+    },
+    "seller": {
+      "erc8004_agent_id": "erc8004:8453:0x32d711C66dD1AD0c42D0cFe48e58ee5f2dE7c243",
+      "sig": "0x37137f225ad9ce2442cfc6a5474c2fb8cd78bb3b0a9ca2aea9c4ce234084b8e70f9286be8d5bfe8b11412466a43969c707d6380e91f92462f1c1c1987c1a7c701b"
+    },
+    "buyer": {
+      "countersig": null
+    },
+    "anchor": null,
+    "delivery": {
+      "status": "delivered"
+    }
+  }
+}
