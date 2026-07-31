@@ -1,4 +1,4 @@
-# x402-receipts SPEC — v0.5
+# x402-receipts SPEC — v0.5.1
 
 Normative specification for the receipt envelope, canonicalization, extension-response
 placement, verification predicates, and the draft EAS batch-anchor schema. Written in
@@ -20,8 +20,10 @@ interpreted as in RFC 2119.
 | receipt delivery to a verifier | undocumented / header examples in README | unchanged | `extensions["delivery-receipt"]` is now the canonical placement; header carriage demoted to an explicitly documented projection (§2) |
 | batch anchoring | EAS `ANCHOR_SCHEMA` implemented, undocumented as a portable spec | unchanged | drafted here as a Foundation-ownable batch-envelope schema (§6) |
 | ERC-8183 | not addressed | not addressed | binding statement added (§7) |
-| merkle inclusion proof | implemented (`merkle.ts`), untested against the spec thread | unchanged | documented as delivered (§8); no new code needed |
-| conformance vectors | none | none | `vectors/` + `VECTORS.md` (§9) |
+| merkle inclusion proof | implemented (`merkle.ts`), untested against the spec thread | unchanged | documented as delivered (§8); no new code needed. **v0.5.1:** leaf envelope-state made normative (§8) and exercised end-to-end by vectors (§9) |
+| conformance vectors | none | none | `vectors/` + `VECTORS.md` (§9). **v0.5.1:** tier-2 vectors added — countersigned+anchored PASS twin, non-payer countersig, leaf-absent-from-root |
+| per-action vs. batch anchoring | not addressed | not addressed | **v0.5.1:** stated as independent, composable strategies (§6.0) |
+| attester neutrality | not addressed | not addressed | **v0.5.1:** every signing role is a party to the transaction; an anchor is an existence bound, never an independent finding (§6.2) |
 
 `scheme` stays `"x402-receipts/v0"` in every version to date, including v0.5 — the schema
 version lives in the EIP-712 signing domain (`domainForV03`) and the npm package version,
@@ -199,6 +201,35 @@ genuinely settled while the seller's own delivery claim says it failed
 
 ## 6. EAS batch-envelope schema (draft, Foundation-ownable)
 
+### 6.0 Per-action and batch anchoring are independent, composable strategies
+
+This section specifies **batch** anchoring: a merkle root over many receipts'
+`receiptDigest`/`envelopeDigest` leaves, committed in one EAS attestation. A **per-action**
+anchor — one commitment per action, e.g. the permissionless CREATE2 action registry
+proposed as `A1_ANCHOR` on #2833 — commits a single action at a time, at a different layer.
+
+The two are **independent and composable, not sequential alternatives, and neither
+supersedes the other.** A seller **MAY** use per-action anchoring only, batch anchoring
+only, both, or neither; nothing in this document **SHOULD** be read as requiring a seller
+to graduate from one to the other, and an implementer **MUST NOT** read either as the only
+available option. Where both are used, they commit to the same value — the receipt's
+`envelopeDigest` (§1) is the per-action anchor's committed digest *and* the batch's merkle
+leaf — so a receipt anchored both ways carries two independent existence bounds over one
+canonical digest, and a verifier **MAY** accept either.
+
+They differ in what they cost and what they buy, which is why the choice is a deployment
+decision rather than a spec-level one:
+
+| | per-action anchor (e.g. `A1_ANCHOR`) | batch anchor (§6, this document) |
+|---|---|---|
+| granularity | one action | one root over N receipts |
+| on-chain cost | per action | amortized across the batch |
+| latency to anchored state | immediate, at delivery time | deferred to the batch's close |
+| inclusion evidence | the anchor itself names the action | merkle inclusion proof (§8) |
+| verifier needs | the anchoring transaction | the anchoring attestation + a proof + the leaf |
+
+### 6.1 The schema
+
 This package anchors batches of receipts to Base via EAS (Ethereum Attestation Service)
 rather than a bespoke contract or ERC-8004 self-anchoring (ERC-8004 explicitly forbids an
 agent self-anchoring its own reputation data; EAS is a neutral, already-deployed OP-stack
@@ -236,6 +267,47 @@ using any vendor payload schema can anchor batches under this same 6(+1)-field e
 the Foundation (or any neutral registry) can own and standardize this schema without
 needing to standardize what any individual vendor puts inside a receipt.
 
+### 6.2 A neutral venue is not a neutral attester
+
+EAS is a neutral **venue**: it is a public predeploy that neither this package nor any
+seller controls, so a commitment made there cannot later be withdrawn, back-dated, or
+silently rewritten. That property is about the venue, and it is the only property the
+venue provides.
+
+The **attester** is not neutral. Under §6.1 the seller anchors batches of its own receipts
+under its own `agentId`, with its own wallet, and chooses which leaves go in. This holds
+for every signing role in the scheme, and the general statement is broader than any
+single-address check:
+
+> **Every signing role in a receipt is held by a party to the transaction.** `seller.sig`
+> is the payee's. `buyer.countersig` is the payer's. The batch attestation is the
+> anchoring seller's. No role in this specification is occupied by a disinterested third
+> party, and no combination of these signatures constitutes an independent finding about
+> the transaction.
+
+Consequently, an evaluator:
+
+- **MUST NOT** treat an anchor as an attestation *that the anchored receipts are true.*
+  A merkle root commits to bytes; it says nothing about whether those bytes describe
+  anything that happened. A seller can anchor a batch of entirely fabricated receipts and
+  the anchor will be as valid as any other.
+- **MUST NOT** count an anchor as an independent corroborating signal alongside the
+  seller's signature. It is the same party asserting the same thing at a second layer.
+- **MAY** rely on an anchor for exactly one thing: an **existence and ordering bound** —
+  *this digest existed no later than this block's timestamp, and is committed in an order
+  that cannot be rewritten after the fact.* That bound is sound precisely because block
+  time is not the attester's to move: a seller cannot back-date a receipt into an earlier
+  anchor, nor remove a leaf from a root already published.
+- **MUST** obtain any independent finding from a source outside the receipt's signing
+  roles — for settlement truth, the chain itself (§5, `verifySettlement`); for
+  counterparty independence, an external funding-source/age signal this package does not
+  provide.
+
+ERC-8004's bar on an agent self-anchoring its own reputation data is satisfied at the
+venue level (the registry is not ours) and **not** at the attester level (the data is
+ours, about us). §6.1's citation of that rule justifies the choice of EAS over a bespoke
+contract; it does not, and is not claimed to, make the seller a neutral attester.
+
 ## 7. ERC-8183 binding statement
 
 Where an implementation binds an ERC-8183 attestation to an x402 settlement:
@@ -266,15 +338,49 @@ for any leaf in a tree built by `buildMerkleTree`. `verifyAnchored(receipt, proo
 expectedRoot)` (`verify.ts`) is the receipt-level convenience wrapper:
 `leaf = receiptDigest(receipt)` (the same digest as §1/§6), then `verifyInclusion`.
 Already exercised for even/odd leaf counts, tampered proofs, wrong roots, and
-forged-leaf/forged-proof substitution attempts (`test/merkle.test.ts`).
+forged-leaf/forged-proof substitution attempts (`test/merkle.test.ts`), and as of v0.5.1
+end-to-end at the vector level against a populated `anchor` block, in both the included
+and the absent-leaf case (§9).
+
+**Which envelope state is the leaf (normative).** The merkle leaf for a receipt is
+`envelopeDigest` computed over that receipt in its **pre-anchor state** — every field as
+signed and (if applicable) countersigned, with `anchor: null`. This is forced, not
+stylistic: `anchor.batch_merkle_root` is derived from the leaves, so a leaf computed over
+an envelope that already contained the anchor block would be self-referential and
+underivable. A verifier holding a receipt with a populated `anchor` therefore **MUST**
+recompute the leaf over the envelope with `anchor` set to `null` before calling
+`verifyInclusion`/`verifyAnchored`; passing the anchored envelope directly yields a
+different digest and fails inclusion. `verifyAnchored` takes the receipt as given and does
+not strip `anchor` itself — the caller owns that step
+(`test/vectors.test.ts`'s `preAnchor` helper is the reference two-liner).
 
 ## 9. Conformance vectors
 
-`vectors/` + `vectors/VECTORS.md`: one PASS vector (settlement truth AND delivery truth
-hold, built from a real settled Base mainnet USDC transaction independently re-confirmed
-against a public RPC) and three negative vectors (`neg-funded-not-delivered`,
-`neg-delivered-not-settled`, `neg-settled-to-expected-solver-mismatch`), each pinned to
-the single named predicate (§5) it must fail on. Every vector's `envelopeDigest` is
+`vectors/` + `vectors/VECTORS.md`: two PASS vectors and five negative vectors, each pinned
+to the single named predicate it must fail on, across two trust tiers.
+
+**Tier 1 — seller signature + settlement + delivery (v0.5).** One PASS vector
+(settlement truth AND delivery truth hold, built from a real settled Base mainnet USDC
+transaction independently re-confirmed against a public RPC) and three negatives
+(`neg-funded-not-delivered`, `neg-delivered-not-settled`,
+`neg-settled-to-expected-solver-mismatch`), each pinned to a §5 predicate.
+
+**Tier 2 — buyer countersignature + anchor inclusion (v0.5.1).** Every tier-1 vector
+carries `buyer.countersig: null` and `anchor: null`, so a tier-1 PASS asserts the
+seller-signature tier and nothing above it. Tier 2 makes that boundary deliberate rather
+than an omission: `pass-countersigned-anchored` is the tier-1 PASS twin with
+`buyer.countersig` and `anchor` actually populated (real `countersignReceipt` output; real
+`buildMerkleTree`/`getProof` root and proof over real envelope digests — the anchor's
+`base_tx` is synthetic and labeled as such, since posting an EAS attestation is a funded
+on-chain write, and per §6.2 the anchor is an existence bound either way).
+`neg-countersig-not-payer` carries a real, well-formed countersignature produced by a key
+that is not `payment.payer` — it must fail closed against the expected buyer address and
+against the default. `neg-leaf-not-in-anchored-root` is signed, countersigned and settled,
+but its leaf is absent from the batch its `anchor` names, while the supplied proof is a
+genuine proof for the leaf that does occupy that index — isolating the inclusion predicate
+(§8) from proof malformation.
+
+Every vector's `envelopeDigest` is
 recorded in `VECTORS.md`'s digest table and re-asserted by `test/vectors.test.ts` on
 every test run — a canonicalization regression fails that suite even if every predicate
 still happens to evaluate correctly.

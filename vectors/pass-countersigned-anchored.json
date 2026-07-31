@@ -1,0 +1,76 @@
+{
+  "id": "pass-countersigned-anchored",
+  "description": "PASS twin of pass-settled-delivered at the next trust tier: same real settled Base mainnet USDC transfer, same delivered status, but buyer.countersig is populated (produced by the vector-only buyer key over the exact seller-signed receipt) AND anchor is populated with a real RFC-6962 merkle root/inclusion proof over real envelope digests. anchor.base_tx is SYNTHETIC — no EAS attestation was posted on-chain to build this fixture — and the anchor is an existence/ordering bound only, never an independent attestation of the receipt's truth (SPEC.md §6.1).",
+  "predicate": "verifyReceipt(receipt,{sellerAddress:vectorSellerAddress,buyerAddress:vectorBuyerAddress,requireCountersig:true}).valid === true AND verifySettlement(receipt,{client:mockMatchingRealTx}).settled === true AND verifyInclusion(anchoredLeaf,merkleProof,anchor.batch_merkle_root) === true",
+  "vectorSellerAddress": "0xC49Adc1ef48fC1D237d55379Fef7F3142cE22468",
+  "vectorBuyerAddress": "0x9643BCAA03e8c5774979001750b44f1D56D0273b",
+  "mockOnChain": {
+    "status": "success",
+    "blockNumber": 100,
+    "currentBlock": 103,
+    "transferLog": {
+      "contract": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+      "from": "0xe61Bd34fcEdF14E0b41B582166eed69E3a6deF89",
+      "to": "0x32d711C66dD1AD0c42D0cFe48e58ee5f2dE7c243",
+      "value": "5000"
+    }
+  },
+  "anchoredLeaf": "58b16b0099ce9cd885d71a02f4bd3335a68f90467f1ca5a5fb16c9f7b0eec212",
+  "merkleProof": [
+    {
+      "hash": "65c0f7a3ea1a31ae9951a1e64c551756acd35bb1c18f6da9ec23a0f6f9f7aa46",
+      "side": "left"
+    },
+    {
+      "hash": "bef55e386fe6ec64797ba68fbbcce8e160cf703ae2285fb3d96995ba04a13073",
+      "side": "right"
+    }
+  ],
+  "batchLeaves": [
+    "4fb1ec3149cc40cb503752418a71258f4f55d7a29478075a9f06f9bd36650e33",
+    "58b16b0099ce9cd885d71a02f4bd3335a68f90467f1ca5a5fb16c9f7b0eec212",
+    "cef6d26c5eef38bb403942ec5cc95bed6a22976bda19e2a0fec746a23f2d1db7",
+    "20646a53e788ca9a51fca1ec52e84fb4525bef210b2c177da71b55ff9beaa7e9"
+  ],
+  "receipt": {
+    "scheme": "x402-receipts/v0",
+    "payment": {
+      "chain_id": 8453,
+      "tx_hash": "0xdeb5872c039a88ae37b66ae490c0c8da9b6a4c652d84494ddcc9a05211d6cc80",
+      "asset": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+      "asset_address": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+      "amount": "5000",
+      "payer": "0xe61Bd34fcEdF14E0b41B582166eed69E3a6deF89",
+      "payee": "0x32d711C66dD1AD0c42D0cFe48e58ee5f2dE7c243"
+    },
+    "request": {
+      "method": "GET",
+      "url_hash": "84d14f74996f93224e9e9db28ff4a39b5cc45b443486a3bb2c5bf0f3546ab7d8",
+      "params_hash": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+      "ts": "2026-07-11T21:03:55Z",
+      "payment_requirements_sha256": "40f3423d4e602c7324d45d51cd273fb238266ee08fef7d9ace34132a7a9b5a2c"
+    },
+    "response": {
+      "status": 200,
+      "body_sha256": "5545e4424324ee42fd5b739544f462a47b81f122b02ec859af986e9316fadee4",
+      "content_type": "application/json",
+      "ts": "2026-07-11T21:03:55Z",
+      "latency_ms": 296
+    },
+    "seller": {
+      "erc8004_agent_id": "erc8004:8453:0x32d711C66dD1AD0c42D0cFe48e58ee5f2dE7c243",
+      "sig": "0xcb4387fd51ca75996b20430239086803a8e88de8fa378acbfb95b2a384ffbe240e592d8d724fa9f5935465b791aa57fcb16563f25fe7e450adc2d6e512a2a73c1b"
+    },
+    "buyer": {
+      "countersig": "0xb64174053100da2cb5ec456e1c447593ddffa33cfe94afcb42ed18f070d07fc2557fec88e3017ab4419504e59753912ebf725c5a4dc2cbc3b4734f7965cfa5cf1b"
+    },
+    "anchor": {
+      "batch_merkle_root": "0x6262ed16479a67f0c8e1309a6fe9dc79ce16699c4da02c41b52d366ed47284c7",
+      "base_tx": "0xa5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5",
+      "leaf_index": 1
+    },
+    "delivery": {
+      "status": "delivered"
+    }
+  }
+}

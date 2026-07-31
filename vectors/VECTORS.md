@@ -1,11 +1,21 @@
-# v0.5 conformance vectors
+# v0.5 / v0.5.1 conformance vectors
 
 JCS-canonical (RFC 8785) fixtures for x402-foundation/x402#2833's requested conformance
-suite: one PASS vector (settlement truth + delivery truth both hold) and three negative
-vectors, each pinned to a single named predicate that must fail.
+suite, across two trust tiers:
+
+- **Tier 1 (v0.5)** — seller signature + settlement + delivery. One PASS vector
+  (settlement truth + delivery truth both hold) and three negative vectors, each pinned
+  to a single named predicate that must fail.
+- **Tier 2 (v0.5.1)** — buyer countersignature + anchor inclusion. Every tier-1 vector
+  carries `buyer.countersig: null` and `anchor: null`, so a tier-1 PASS asserts the
+  seller-signature tier and nothing above it. Tier 2 sets that boundary deliberately:
+  one countersigned-and-anchored PASS twin and two negatives
+  (`neg-countersig-not-payer`, `neg-leaf-not-in-anchored-root`).
 
 Every `.json` file here is `{ id, description, predicate, vectorSellerAddress,
-vectorBuyerAddress, mockOnChain, receipt }`. `receipt` is the exact `Receipt` object (see
+vectorBuyerAddress, mockOnChain, receipt }`, plus — on tier-2 vectors — `anchoredLeaf`,
+`merkleProof`, `batchLeaves`, and (where the predicate needs them) `decoyLeaf` /
+`vectorImpostorAddress`. `receipt` is the exact `Receipt` object (see
 `SPEC.md` "Canonical envelope"); `envelopeDigest(receipt)` (== `receiptDigest`, sha256 of
 `canonicalizeJCS(receipt)`) is the digest below. `mockOnChain` is the settlement-client
 mock each vector's test in `test/vectors.test.ts` injects via `SettlementClient` — no
@@ -24,6 +34,9 @@ scripts/gen-vectors.mjs` from the repo root) — EIP-712 signing over secp256k1 
 | `neg-funded-not-delivered` | `4fb1ec3149cc40cb503752418a71258f4f55d7a29478075a9f06f9bd36650e33` |
 | `neg-delivered-not-settled` | `cef6d26c5eef38bb403942ec5cc95bed6a22976bda19e2a0fec746a23f2d1db7` |
 | `neg-settled-to-expected-solver-mismatch` | `20646a53e788ca9a51fca1ec52e84fb4525bef210b2c177da71b55ff9beaa7e9` |
+| `pass-countersigned-anchored` | `d9a835dfba19cb6da87f390a85ade40202f1281d9a2a2179ab2f0fc3841770bb` |
+| `neg-countersig-not-payer` | `05264696dd2c53536b2b1d70ec03fcd9bf539984ba49127d5a4c67964bd73155` |
+| `neg-leaf-not-in-anchored-root` | `e420aac6cbffef025e463af9c7bd10538dd01c5044aa2b80b7897ea48566e806` |
 
 `test/vectors.test.ts` "digest stability" tests recompute `envelopeDigest(vector.receipt)`
 for every file above and assert it equals the table value — a canonicalization
@@ -81,3 +94,62 @@ struct types `latencyMs` as `uint256` (see `sign.ts`) — a design constraint do
   mocked on-chain `Transfer` log actually moved funds to `0x...0BADBAD`, not the receipt's
   claimed `payee`. Models a solver-substitution/front-run: money moved, but not to the
   named counterparty. Fails the settlement predicate's transfer-match check.
+
+## Tier 2 (v0.5.1): countersignature and anchor inclusion
+
+The four vectors above all carry `buyer.countersig: null` and `anchor: null`. That made a
+suite-wide PASS mean **seller-signature tier only** — `countersignReceipt`,
+`verifyInclusion` and `verifyAnchored` shipped and were unit-tested, but no vector
+exercised them. These three set that tier deliberately.
+
+- **`pass-countersigned-anchored`** — the `pass-settled-delivered` twin, one tier up:
+  same real settled Base mainnet USDC transfer and same `delivery.status: "delivered"`,
+  but `buyer.countersig` is real `countersignReceipt` output over the exact seller-signed
+  receipt, and `anchor` is populated. Passes
+  `verifyReceipt({ sellerAddress, buyerAddress, requireCountersig: true })`,
+  `verifySettlement`, and `verifyInclusion(anchoredLeaf, merkleProof, root)`.
+- **`neg-countersig-not-payer`** — identical except the countersignature was produced by a
+  third vector-only key (`vectorImpostorAddress`) belonging to **no** party named in the
+  receipt: a relayer or bystander attaching an acceptance the buyer never gave. The
+  signature is real and well-formed — it verifies for the key that made it, which is
+  exactly why "a countersig is present" can never stand in for "the payer accepted". Fails
+  closed against both the expected buyer address and the default (`payment.payer`), while
+  `seller.sig` stays valid, isolating the predicate.
+- **`neg-leaf-not-in-anchored-root`** — signed, countersigned and settled, but its
+  envelope digest is not one of the leaves of the batch its `anchor` names. The supplied
+  proof is a **genuine** proof for the receipt that actually occupies that `leaf_index`
+  (`decoyLeaf`, assertable as `verifyInclusion(decoyLeaf, proof, root) === true`), so the
+  failure isolates the inclusion predicate itself rather than proof malformation.
+
+### The merkle leaf is the pre-anchor envelope
+
+`anchoredLeaf` is `envelopeDigest(receipt)` computed with `anchor: null`. This is forced,
+not stylistic: `anchor.batch_merkle_root` is derived from the leaves, so a leaf computed
+over an envelope already containing the anchor block would be self-referential. Verifiers
+holding an anchored receipt must strip `anchor` before calling
+`verifyInclusion`/`verifyAnchored` — see `SPEC.md` §8 and the `preAnchor` helper in
+`test/vectors.test.ts`.
+
+### What is real and what is synthetic in the anchor block
+
+| field | status |
+|---|---|
+| `anchor.batch_merkle_root` | **real** — `buildMerkleTree` output over real `envelopeDigest` leaves (the other vectors' own receipts are the sibling leaves) |
+| `merkleProof` | **real** — `getProof` output, verified by `verifyInclusion` in the generator before the file is written |
+| `anchoredLeaf` / `decoyLeaf` / `batchLeaves` | **real** — envelope digests of real receipts in this directory |
+| `anchor.base_tx` | **SYNTHETIC** (`0xa5a5…a5`) — no EAS attestation was posted on-chain to build these fixtures; posting one is a funded, irreversible on-chain write and out of scope for a test vector |
+
+Labeling `base_tx` synthetic costs the vectors nothing, because per `SPEC.md` §6.2 an
+anchor is an existence/ordering bound and never an independent finding about the receipt —
+the predicate under test here is merkle inclusion, which is fully determined by the root,
+the leaf and the proof, all of which are real.
+
+### Vector-only countersigning key
+
+`buyer.countersig` follows the same convention as `seller.sig`: it is produced by a fixed,
+publicly-labeled vector-only key (`0x` + `"22".repeat(31)` + `"bb"`, address
+`vectorBuyerAddress`), **not** the real payer's key, which this repo never exposes. So
+tier-2 verification must pass `{ buyerAddress: vectorBuyerAddress }` explicitly;
+`test/vectors.test.ts` asserts that the default (`payment.payer`) does **not** verify,
+rather than leaving that convention implicit. `neg-countersig-not-payer` uses a third key
+(`0x` + `"33".repeat(31)` + `"cc"`).

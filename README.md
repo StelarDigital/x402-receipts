@@ -141,13 +141,29 @@ payment.payee`. Callers who need to allow same-address test/internal flows can p
 `{ rejectSelfDeal: false }` explicitly, but should not do so for anything that feeds a
 public trust or reputation signal.
 
-Self-dealing detection only catches the same-address case. It does **not** catch a
-seller who mints many distinct addresses and pays itself from each of them — that
-requires an external signal (e.g., a funding-source or on-chain age/reputation check)
-outside this library's scope. The practical consequence for anyone scoring receipts as a
-reputation signal: **count distinct, independently-funded counterparties, never raw
-receipt counts.** A seller with 10,000 receipts from 3 real buyers should score below one
-with 50 receipts from 50 distinct, independently-funded buyers.
+Self-dealing detection is **address-level only**: it catches `payment.payer ===
+payment.payee` and nothing else. It does **not** catch a seller who mints many distinct
+addresses and pays itself from each of them — that requires an external signal (e.g., a
+funding-source or on-chain age/reputation check) outside this library's scope.
+
+The structural limit underneath that is broader than self-dealing detection, and it does
+not go away when the addresses differ:
+
+> **Every signing role in a receipt is held by a party to the transaction.** `seller.sig`
+> is the payee's. `buyer.countersig` is the payer's. The batch attestation that anchors a
+> receipt on-chain is the anchoring seller's. No role in this scheme is occupied by a
+> disinterested third party, so **no combination of these signatures is an independent
+> finding about the transaction** — however many of them are present, and however
+> cryptographically sound each one is.
+
+This is why an anchor is not a second opinion (see "On-chain anchoring" below: EAS is a
+neutral venue, but a neutral venue is not a neutral attester), and why the only
+independent input this library offers is the chain itself — `verifySettlement`, which
+checks a fact none of the signing parties controls. The practical consequence for anyone
+scoring receipts as a reputation signal: **count distinct, independently-funded
+counterparties, never raw receipt counts.** A seller with 10,000 receipts from 3 real
+buyers should score below one with 50 receipts from 50 distinct, independently-funded
+buyers. `SPEC.md` §6.2 states this normatively.
 
 ### Settlement-grounded reputation (M2a)
 
@@ -250,13 +266,38 @@ pattern) as their first argument so the test suite never touches the network; pa
 attestation's UID for the same agent, so the anchor history for an agent can be walked
 back through EAS alone — no off-chain index required.
 
-**Honest limit:** anchoring commits a merkle root publicly and gives it a block
-timestamp. It does **not**, by itself, prove that any receipt in the batch actually
-settled — a merkle root is just a commitment to some bytes; nothing stops anchoring a
-root over fabricated receipts. Settlement proof is `verifySettlement` /
-`verifyReceiptFull`'s job (see "Settlement-grounded reputation" above); the two are
-independent checks and a caller scoring reputation should run both, never substitute
-one for the other.
+**Honest limit — a neutral venue is not a neutral attester.** Anchoring commits a merkle
+root publicly and gives it a block timestamp. EAS is neutral as a *venue*: nobody here
+controls it, so a published commitment cannot be withdrawn, back-dated, or silently
+rewritten. The *attester* is not neutral — the seller anchors its own receipts, under its
+own `agentId`, with its own wallet, choosing its own leaves. ERC-8004's bar on an agent
+self-anchoring its own reputation data is met at the venue level and **not** at the
+attester level.
+
+So an anchor proves exactly one thing, and an evaluator must not read it as more:
+
+- **What it is:** an existence and ordering bound — *this digest existed no later than
+  this block's timestamp, in an order nobody can rewrite afterwards.* That bound is sound
+  because block time is not the attester's to move.
+- **What it is not:** evidence that any anchored receipt is true, or that any payment in
+  the batch settled. A merkle root is a commitment to bytes; nothing stops anchoring a
+  root over fabricated receipts. It is also **not** an independent corroboration of
+  `seller.sig` — it is the same party asserting the same thing one layer down.
+
+Settlement proof is `verifySettlement` / `verifyReceiptFull`'s job (see
+"Settlement-grounded reputation" above); the two are independent checks and a caller
+scoring reputation should run both, never substitute one for the other. `SPEC.md` §6.2
+is the normative statement.
+
+**Batch anchoring is not the only anchoring strategy, and not a successor to per-action
+anchoring.** A per-action anchor (one commitment per action — e.g. the permissionless
+CREATE2 action registry proposed as `A1_ANCHOR` on
+[#2833](https://github.com/x402-foundation/x402/issues/2833)) and the batch anchor
+implemented here operate at different layers and are **independent, composable
+strategies, not sequential alternatives**. A seller may use either, both, or neither; both
+commit to the same `envelopeDigest`, so using both yields two independent existence bounds
+over one canonical digest. See `SPEC.md` §6.0 for the trade-off table (granularity,
+on-chain cost, latency-to-anchored, what a verifier needs).
 
 ## Receipt schema (v0)
 
@@ -399,6 +440,31 @@ version, not the scheme string.
   `verifyBuyerCountersig` try the v0.3 domain first, then fall back to the legacy v0
   domain, so receipts signed before this release keep verifying with no changes on
   either side.
+
+## v0.5.1 additions
+
+Response to two follow-up reviews on
+[x402-foundation/x402#2833](https://github.com/x402-foundation/x402/issues/2833) —
+[@giskard09](https://github.com/giskard09) on anchoring layers, Tersign
+([@wowlegend](https://github.com/wowlegend)) on the conformance tier and the trust-limit
+wording. Docs and vectors only; no behavior change to any shipped function.
+
+- **Per-action and batch anchoring are independent, composable strategies** (SPEC.md
+  §6.0), not sequential alternatives — a seller may use either, both, or neither, and
+  both commit to the same `envelopeDigest`.
+- **Tier-2 conformance vectors** (`vectors/`): `pass-countersigned-anchored` (the PASS
+  twin with `buyer.countersig` AND `anchor` actually populated),
+  `neg-countersig-not-payer`, `neg-leaf-not-in-anchored-root`. The four v0.5 vectors all
+  carried `countersig: null`/`anchor: null`, so "PASS" meant seller-signature tier only;
+  that boundary is now deliberate and tested rather than implied by omission.
+- **The structural trust limit stated at its full width**, identically in this README and
+  SPEC.md §6.2: self-dealing detection is address-level only, every signing role (payee
+  signature, buyer countersignature, batch attester) is held by a party to the
+  transaction, and an anchor is an existence/ordering bound that **must not** be read as
+  an independent finding. A neutral venue is not a neutral attester.
+- **Merkle leaf envelope-state made normative** (SPEC.md §8): the leaf is the
+  `envelopeDigest` of the **pre-anchor** envelope (`anchor: null`); a verifier holding an
+  anchored receipt must strip `anchor` before calling `verifyInclusion`/`verifyAnchored`.
 
 ## v0.5 additions
 
