@@ -131,6 +131,27 @@ leaf and content-addressing), not the EIP-712 signing domain, which already had 
 versioned, explicitly-typed-and-hashed struct as of v0.3. `verifySellerSig`/
 `verifyBuyerCountersig` try v0.3 first, then fall back to the legacy v0 domain, unchanged.
 
+### 3.1 Reference composition (settlement/refusal identity)
+
+A payment's settlement/refusal identity is **derived once, at ingress, from the request as received (canonical form)**, and resolved identically by both the settle path and the refusal path, bound to `attempt_id`.
+
+*Prohibition:* **no path re-reads `accepts` after ingress.** The positive rule ("derived once… settle and refusal resolve the same `attempt_id`") tells you what to build; the negative one is what a refactor test actually asserts — a guardrail that re-derives the fingerprint from live state can drift back in a refactor, and that drift is the failure this rule exists to prevent.
+
+*Composition:* the digest is computed over **decoded, named fields** pulled out of the request object, never over the wire array — wire ordering is not ours to control, and a reorder that changes the digest silently splits or merges a count (the actual bug). This builds on the `canonicalizeJCS` rule in §4.
+
+Consequences (the two-event split — reorder-within-terms vs a real terms change):
+- Reorder-within-terms (same content) preserves one identity.
+- A genuine terms change (new `payTo`/`amount`) yields a new identity and a legitimate `redeem_count` reset — an audit signal, not a bug.
+- A mid-attempt terms change surfaces as an announcement event ("announcement changed mid-attempt"), never folded into the identity as a count divergence.
+
+*Acceptance tests (all of which fail today if a second read exists):*
+1. One settle + N refusals for the same attempt ⇒ the digest and `attempt_id` read byte-identical at both sites.
+2. Permuting `accepts` without changing terms ⇒ digest unchanged (canonical, not wire).
+3. Changing `amount` mid-attempt ⇒ new fingerprint, and the in-flight change surfaces as an announcement event, not a count divergence.
+
+*Provenance:* developed in discussion on x402-receipts#6; invariant language per the gates-spec refusal-attestation guardrail model (RW-001). Authored by @ruiruii.
+
+
 ## 4. `payment_requirements_sha256` canonicalization rules
 
 - Computed over exactly `{ payTo, amount, asset, scheme, resource, timeout }`
