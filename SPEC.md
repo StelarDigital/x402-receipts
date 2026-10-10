@@ -139,6 +139,8 @@ A payment's settlement/refusal identity is **derived once, at ingress, from the 
 
 *Composition:* the digest is computed over **decoded, named fields** pulled out of the request object, never over the wire array — wire ordering is not ours to control, and a reorder that changes the digest silently splits or merges a count (the actual bug). This builds on the `canonicalizeJCS` rule in §4.
 
+*Carriage:* the §4 `payment_requirements_sha256` digest is **derived once at ingress and carried alongside `attempt_id`**, never re-read at settle/refusal — so §3.1's identity binds to the carried digest, not a recompute. §4 states *what* the digest is computed over; §3.1 now also states *when*, which closes the one-level-down gap where a settle/refusal path could re-read `payment_requirements` and re-introduce the drift §3.1 forbids.
+
 Consequences (the two-event split — reorder-within-terms vs a real terms change):
 - Reorder-within-terms (same content) preserves one identity.
 - A genuine terms change (new `payTo`/`amount`) yields a new identity and a legitimate `redeem_count` reset — an audit signal, not a bug.
@@ -148,6 +150,7 @@ Consequences (the two-event split — reorder-within-terms vs a real terms chang
 1. One settle + N refusals for the same attempt ⇒ the digest and `attempt_id` read byte-identical at both sites.
 2. Permuting `accepts` without changing terms ⇒ digest unchanged (canonical, not wire).
 3. Changing `amount` mid-attempt ⇒ new fingerprint, and the in-flight change surfaces as an announcement event, not a count divergence.
+4. A terms change (or `payTo`/`amount` write) *between* ingress and the refusal ⇒ the refusal still resolves the ingress identity (asserts the carried digest, not a live recompute). This is the test that actually fails on the original defect; test 1 alone passes even if both sites re-derive from live state.
 
 *Provenance:* developed in discussion on x402-receipts#6; invariant language per the gates-spec refusal-attestation guardrail model (RW-001). Authored by @ruiruii.
 
